@@ -13,8 +13,57 @@ const FileType = require('file-type');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const SECRET_TOKEN = process.env.SECRET_TOKEN || 'your-secret-token';
-const AUDIO_DIR = path.join(__dirname, '.data', 'audio');
-const METADATA_PATH = path.join(__dirname, '.data', 'metadata.yml');
+const AUDIO_DIR = path.join(__dirname, 'data', 'audio');
+const METADATA_PATH = path.join(__dirname, 'data', 'metadata.yml');
+
+// Check if running on Glitch
+const isGlitch = () => {
+  return !!process.env.PROJECT_DOMAIN;
+};
+
+// Parse .glitch-assets file to get CDN URLs
+async function getGlitchAssets() {
+  if (!isGlitch()) return new Map();
+
+  try {
+    const content = await fsPromises.readFile('.glitch-assets', 'utf8');
+    const assets = new Map();
+    
+    // Process each line individually
+    content.split('\n')
+      .filter(line => line.trim()) // Skip empty lines
+      .forEach(line => {
+        try {
+          // Clean up the line - remove any trailing commas and normalize whitespace
+          const cleanLine = line.trim().replace(/,\s*$/, '');
+          const asset = JSON.parse(cleanLine);
+          
+          if (asset.deleted) {
+            // Remove deleted assets
+            if (asset.uuid) {
+              // Find and remove any asset with this UUID
+              for (const [name, url] of assets.entries()) {
+                if (url.includes(asset.uuid)) {
+                  assets.delete(name);
+                }
+              }
+            }
+          } else if (asset.name && asset.url) {
+            // Store mapping of filename to CDN URL
+            assets.set(asset.name, asset.url);
+          }
+        } catch (parseError) {
+          console.warn('Error parsing .glitch-assets line:', parseError);
+          // Continue processing other lines
+        }
+      });
+
+    return assets;
+  } catch (error) {
+    console.warn('Error reading .glitch-assets:', error);
+    return new Map();
+  }
+}
 
 const SUPPORTED_FORMATS = {
   'mp3': 'audio/mpeg',
@@ -105,7 +154,7 @@ function getEpisodeDetails(filename, metadata = { episodes: {} }) {
 // Initialize storage and create example metadata if needed
 const initializeStorage = async () => {
   try {
-    const dataDir = path.join(__dirname, '.data');
+    const dataDir = path.join(__dirname, 'data');
     console.log('Initializing storage in:', dataDir);
     
     // Create directories
@@ -176,6 +225,16 @@ app.use('/audio', checkSecret, async (req, res, next) => {
     const filename = path.basename(req.path);
     const filePath = path.join(AUDIO_DIR, filename);
 
+    // Check if we're on Glitch and have a CDN URL for this file
+    if (isGlitch()) {
+      const glitchAssets = await getGlitchAssets();
+      const cdnUrl = glitchAssets.get(filename);
+      if (cdnUrl) {
+        // Redirect to CDN URL if available
+        return res.redirect(cdnUrl);
+      }
+    }
+
     try {
       await fsPromises.access(filePath);
     } catch {
@@ -217,6 +276,7 @@ app.get('/feed.xml', checkSecret, async (req, res) => {
   try {
     const metadata = await loadMetadata();
     const podcastMetadata = metadata.podcast || {};
+    const glitchAssets = isGlitch() ? await getGlitchAssets() : new Map();
 
     const feed = new Podcast({
       title: podcastMetadata.title || 'My Private Music Collection',
@@ -234,28 +294,62 @@ app.get('/feed.xml', checkSecret, async (req, res) => {
       itunesCategories: podcastMetadata.categories
     });
 
-    const audioFiles = (await fsPromises.readdir(AUDIO_DIR))
-      .filter(file => {
-        const ext = file.toLowerCase().split('.').pop();
-        return SUPPORTED_FORMATS.hasOwnProperty(ext);
-      })
-      .map(file => getEpisodeDetails(file, metadata))
-      .sort((a, b) => (b.releaseDate || 0) - (a.releaseDate || 0));
+    let audioFiles;
+    if (isGlitch()) {
+      // When on Glitch, only use files that exist in glitch-assets
+      audioFiles = Array.from(glitchAssets.keys())
+        .filter(filename => {
+          const ext = filename.toLowerCase().split('.').pop();
+          return SUPPORTED_FORMATS.hasOwnProperty(ext);
+        })
+        .map(filename => getEpisodeDetails(filename, metadata))
+        .sort((a, b) => (b.releaseDate || 0) - (a.releaseDate || 0));
+    } else {
+      // When not on Glitch, use local files
+      audioFiles = (await fsPromises.readdir(AUDIO_DIR))
+        .filter(file => {
+          const ext = file.toLowerCase().split('.').pop();
+          return SUPPORTED_FORMATS.hasOwnProperty(ext);
+        })
+        .map(file => getEpisodeDetails(file, metadata))
+        .sort((a, b) => (b.releaseDate || 0) - (a.releaseDate || 0));
+    }
     
     for (const episode of audioFiles) {
-        if (shouldReleaseEpisode(episode.releaseDate)) {
-          const filePath = path.join(AUDIO_DIR, episode.filename);
-          const stats = await fsPromises.stat(filePath);
-          const extension = episode.filename.toLowerCase().split('.').pop();
-          
-          feed.addItem({
+      if (shouldReleaseEpisode(episode.releaseDate)) {
+        const extension = episode.filename.toLowerCase().split('.').pop();
+        
+        // Get the appropriate URL and size for the audio file
+        let audioUrl, fileSize;
+        if (isGlitch()) {
+          // On Glitch, use CDN URL directly
+          audioUrl = glitchAssets.get(episode.filename);
+          // Get size from glitch-assets metadata if available
+          try {
+            const content = await fsPromises.readFile('.glitch-assets', 'utf8');
+            const assetInfo = content.split('\n')
+              .filter(line => line.trim())
+              .map(line => JSON.parse(line.trim()))
+              .find(asset => asset.name === episode.filename && !asset.deleted);
+            fileSize = assetInfo?.size;
+          } catch (error) {
+            console.warn('Error getting file size from glitch-assets:', error);
+          }
+        } else {
+          // Not on Glitch, use local file with token
+          audioUrl = `${req.protocol}://${req.get('host')}/audio/${episode.filename}?token=${SECRET_TOKEN}`;
+          const stats = await fsPromises.stat(path.join(AUDIO_DIR, episode.filename));
+          fileSize = stats.size;
+        }
+
+        feed.addItem({
           title: episode.title,
           description: episode.description,
-          url: `${req.protocol}://${req.get('host')}/audio/${episode.filename}?token=${SECRET_TOKEN}`,
-          date: episode.releaseDate || stats.mtime,
+          url: audioUrl,
+          date: episode.releaseDate || new Date(),
           enclosure: {
-            url: `${req.protocol}://${req.get('host')}/audio/${episode.filename}?token=${SECRET_TOKEN}`,
-            size: stats.size,
+            url: audioUrl,
+            size: fileSize || 0,
             type: SUPPORTED_FORMATS[extension]
           },
           itunesAuthor: episode.author,
@@ -280,16 +374,26 @@ app.get('/feed.xml', checkSecret, async (req, res) => {
 app.get('/episodes', checkSecret, async (req, res) => {
   try {
     const metadata = await loadMetadata();
-    const audioFiles = await fs.readdir(AUDIO_DIR);
+    const glitchAssets = isGlitch() ? await getGlitchAssets() : new Map();
     
-    const episodes = audioFiles
-      .filter(file => file.endsWith('.mp3'))
-      .map(file => getEpisodeDetails(file, metadata))
-      .sort((a, b) => (b.releaseDate || 0) - (a.releaseDate || 0));
+    let audioFiles;
+    if (isGlitch()) {
+      // When on Glitch, only list files that exist in glitch-assets
+      audioFiles = Array.from(glitchAssets.keys())
+        .filter(file => file.endsWith('.mp3'))
+        .map(file => getEpisodeDetails(file, metadata))
+        .sort((a, b) => (b.releaseDate || 0) - (a.releaseDate || 0));
+    } else {
+      // When not on Glitch, list local files
+      audioFiles = (await fsPromises.readdir(AUDIO_DIR))
+        .filter(file => file.endsWith('.mp3'))
+        .map(file => getEpisodeDetails(file, metadata))
+        .sort((a, b) => (b.releaseDate || 0) - (a.releaseDate || 0));
+    }
     
     res.json({
       podcast: metadata.podcast || {},
-      episodes: episodes
+      episodes: audioFiles
     });
   } catch (error) {
     console.error('Error listing episodes:', error);
@@ -303,7 +407,11 @@ app.get('/favicon.ico', (req, res) => res.status(204).end());
 initializeStorage().then(() => {
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-    console.log(`Upload your MP3 files to: ${AUDIO_DIR}`);
+    if (isGlitch()) {
+      console.log('Running on Glitch.com - will use CDN URLs when available');
+    } else {
+      console.log(`Upload your MP3 files to: ${AUDIO_DIR}`);
+    }
     console.log(`Metadata file location: ${METADATA_PATH}`);
   });
 });
@@ -311,11 +419,14 @@ initializeStorage().then(() => {
 app.get('/debug/metadata', checkSecret, async (req, res) => {
   try {
     const metadata = await loadMetadata();
+    const glitchAssets = await getGlitchAssets();
     res.json({
       metadataPath: METADATA_PATH,
       metadata: metadata,
       audioDir: AUDIO_DIR,
-      exists: await fsPromises.access(METADATA_PATH).then(() => true).catch(() => false)
+      exists: await fsPromises.access(METADATA_PATH).then(() => true).catch(() => false),
+      isGlitch: isGlitch(),
+      glitchAssets: Object.fromEntries(glitchAssets)
     });
   } catch (error) {
     res.status(500).json({ error: error.message, stack: error.stack });

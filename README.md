@@ -9,7 +9,7 @@ Create your own private podcast feed with scheduled episodes! Perfect for advent
    ```
    SECRET_TOKEN=your-super-secret-string
    ```
-3. Upload your MP3 files to `.data/audio` with this naming pattern:
+3. Upload your MP3 files to `data/audio` with this naming pattern:
    ```
    YYYY-MM-DD_Episode_Title.mp3
    
@@ -25,7 +25,7 @@ https://your-project-name.glitch.me/feed.xml?token=your-super-secret-string
 
 ## 🎸 Adding Episode Details (Optional)
 
-Want to add descriptions, artist info, or duration? Create `.data/metadata.yml`:
+Want to add descriptions, artist info, or duration? Create `data/metadata.yml`:
 
 ```yaml
 podcast:
@@ -112,7 +112,7 @@ Upload your audio files in any of these formats:
 - Episodes are released at midnight based on the date in the filename
 - Files without dates are always available
 - Keep your token secret - it's your podcast's VIP pass! 🎟️
-- Store files in `.data/audio` - they won't be included in remixes
+- Store files in `data/audio` - they won't be included in remixes
 - The free Glitch plan has a 200MB storage limit - perfect for an advent calendar! 
 
 ## 🎯 Coming Soon
@@ -125,7 +125,7 @@ Upload your audio files in any of these formats:
 ## 🐛 Troubleshooting
 
 Nothing playing? Check that:
-1. Your files are in `.data/audio`
+1. Your files are in `data/audio`
 2. Filenames follow the `YYYY-MM-DD_Title.mp3` format
 3. The release date has arrived
 4. Your token is correct
