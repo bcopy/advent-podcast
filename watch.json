@@ -1,0 +1,19 @@
+{
+    "install": {
+      "include": [
+        "^package\\.json$"
+      ]
+    },
+    "restart": {
+      "include": [
+        "\\.js$",
+        "\\.json",
+        "\\.yaml$",
+        "\\.yml$"
+      ],
+      "exclude": [
+        "^.data/"
+      ]
+    },
+    "throttle": 1000
+  }
