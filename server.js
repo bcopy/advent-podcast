@@ -5,8 +5,10 @@ const { Podcast } = require('podcast');
 const cors = require('cors');
 const morgan = require('morgan');
 const path = require('path');
-const fs = require('fs').promises;
+const fs = require('fs');
+const fsPromises = require('fs').promises;
 const yaml = require('js-yaml');
+const FileType = require('file-type');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,14 +16,52 @@ const SECRET_TOKEN = process.env.SECRET_TOKEN || 'your-secret-token';
 const AUDIO_DIR = path.join(__dirname, '.data', 'audio');
 const METADATA_PATH = path.join(__dirname, '.data', 'metadata.yml');
 
+const SUPPORTED_FORMATS = {
+  'mp3': 'audio/mpeg',
+  'm4a': 'audio/mp4',
+  'opus': 'audio/opus',
+  'ogg': 'audio/ogg',
+  'mka': 'audio/x-matroska'
+};
+
 // Load metadata function
 async function loadMetadata() {
   try {
-    const fileContents = await fs.readFile(METADATA_PATH, 'utf8');
-    return yaml.load(fileContents) || { episodes: {}, podcast: {} };
+    console.log('Looking for metadata file at:', METADATA_PATH);
+    const fileContents = await fsPromises.readFile(METADATA_PATH, 'utf8');
+    console.log('Metadata file found and loaded');
+    const parsed = yaml.load(fileContents) || { episodes: {}, podcast: {} };
+    console.log('Podcast title from metadata:', parsed.podcast?.title);
+    console.log('Number of episodes in metadata:', Object.keys(parsed.episodes || {}).length);
+    return parsed;
   } catch (error) {
-    console.log('No metadata file found or error reading it. Using defaults.');
+    if (error.code === 'ENOENT') {
+      console.error(`Metadata file not found at ${METADATA_PATH}`);
+    } else {
+      console.error('Error parsing metadata:', error);
+    }
     return { episodes: {}, podcast: {} };
+  }
+}
+
+async function getAudioFileType(filePath) {
+  try {
+    const fileType = await FileType.fromFile(filePath);
+    if (!fileType) return null;
+
+    // Map detected MIME types to our supported formats
+    const mimeTypeMap = {
+      'audio/mpeg': 'mp3',
+      'audio/mp4': 'm4a',
+      'audio/opus': 'opus',
+      'audio/ogg': 'opus', // Handle Opus in Ogg container
+      'audio/x-matroska': 'opus' // Handle Opus in MKA container
+    };
+
+    return mimeTypeMap[fileType.mime];
+  } catch (error) {
+    console.error('Error detecting file type:', error);
+    return null;
   }
 }
 
@@ -65,13 +105,25 @@ function getEpisodeDetails(filename, metadata = { episodes: {} }) {
 // Initialize storage and create example metadata if needed
 const initializeStorage = async () => {
   try {
-    await fs.mkdir(path.join(__dirname, '.data'), { recursive: true });
-    await fs.mkdir(AUDIO_DIR, { recursive: true });
+    const dataDir = path.join(__dirname, '.data');
+    console.log('Initializing storage in:', dataDir);
     
-    // Create example metadata file if it doesn't exist
+    // Create directories
+    await fsPromises.mkdir(dataDir, { recursive: true });
+    await fsPromises.mkdir(AUDIO_DIR, { recursive: true });
+    
+    // Check if metadata file exists
     try {
-      await fs.access(METADATA_PATH);
+      await fsPromises.access(METADATA_PATH);
+      console.log('Existing metadata file found');
+      
+      // Validate the existing metadata
+      const metadata = await loadMetadata();
+      if (!metadata || !metadata.podcast) {
+        console.warn('Metadata file exists but might be invalid');
+      }
     } catch {
+      console.log('No metadata file found, creating example');
       const exampleMetadata = {
         podcast: {
           title: "My Private Music Collection",
@@ -86,12 +138,13 @@ const initializeStorage = async () => {
           }
         }
       };
-      await fs.writeFile(METADATA_PATH, yaml.dump(exampleMetadata), 'utf8');
+      await fsPromises.writeFile(METADATA_PATH, yaml.dump(exampleMetadata), 'utf8');
     }
     
     console.log('Storage directories and metadata initialized');
   } catch (error) {
     console.error('Error initializing storage:', error);
+    throw error;
   }
 };
 
@@ -121,19 +174,38 @@ app.use('/audio', checkSecret, async (req, res, next) => {
   try {
     const metadata = await loadMetadata();
     const filename = path.basename(req.path);
-    const episode = getEpisodeDetails(filename, metadata);
-    
-    if (!shouldReleaseEpisode(episode.releaseDate)) {
-      return res.status(404).json({ error: 'Episode not yet available' });
-    }
-    
-    // Check if file exists before serving
+    const filePath = path.join(AUDIO_DIR, filename);
+
     try {
-      await fs.access(path.join(AUDIO_DIR, filename));
-      return express.static(AUDIO_DIR)(req, res, next);
+      await fsPromises.access(filePath);
     } catch {
       return res.status(404).json({ error: 'File not found' });
     }
+
+    const extension = filename.toLowerCase().split('.').pop();
+    if (!SUPPORTED_FORMATS.hasOwnProperty(extension)) {
+      return res.status(400).json({ error: 'Unsupported file format' });
+    }
+
+    const episode = getEpisodeDetails(filename, metadata);
+    if (!shouldReleaseEpisode(episode.releaseDate)) {
+      return res.status(404).json({ error: 'Episode not yet available' });
+    }
+
+    // Verify the file type matches the extension
+    const actualType = await getAudioFileType(filePath);
+    const expectedType = extension;
+    
+    if (actualType && actualType !== expectedType && actualType !== 'opus') {
+      console.warn(`Warning: File ${filename} has mismatched type. Extension: ${extension}, Actual: ${actualType}`);
+    }
+
+    // Set the correct content type
+    res.type(SUPPORTED_FORMATS[extension]);
+    
+    // Stream the file
+    const stream = fs.createReadStream(filePath);
+    stream.pipe(res);
   } catch (error) {
     console.error('Error serving audio:', error);
     return res.status(500).json({ error: 'Server error' });
@@ -162,18 +234,21 @@ app.get('/feed.xml', checkSecret, async (req, res) => {
       itunesCategories: podcastMetadata.categories
     });
 
-    const audioFiles = await fs.readdir(AUDIO_DIR);
-    
-    const episodes = audioFiles
-      .filter(file => file.endsWith('.mp3'))
+    const audioFiles = (await fsPromises.readdir(AUDIO_DIR))
+      .filter(file => {
+        const ext = file.toLowerCase().split('.').pop();
+        return SUPPORTED_FORMATS.hasOwnProperty(ext);
+      })
       .map(file => getEpisodeDetails(file, metadata))
       .sort((a, b) => (b.releaseDate || 0) - (a.releaseDate || 0));
     
-    for (const episode of episodes) {
-      if (shouldReleaseEpisode(episode.releaseDate)) {
-        const stats = await fs.stat(path.join(AUDIO_DIR, episode.filename));
-        
-        feed.addItem({
+    for (const episode of audioFiles) {
+        if (shouldReleaseEpisode(episode.releaseDate)) {
+          const filePath = path.join(AUDIO_DIR, episode.filename);
+          const stats = await fsPromises.stat(filePath);
+          const extension = episode.filename.toLowerCase().split('.').pop();
+          
+          feed.addItem({
           title: episode.title,
           description: episode.description,
           url: `${req.protocol}://${req.get('host')}/audio/${episode.filename}?token=${SECRET_TOKEN}`,
@@ -181,7 +256,7 @@ app.get('/feed.xml', checkSecret, async (req, res) => {
           enclosure: {
             url: `${req.protocol}://${req.get('host')}/audio/${episode.filename}?token=${SECRET_TOKEN}`,
             size: stats.size,
-            type: 'audio/mpeg'
+            type: SUPPORTED_FORMATS[extension]
           },
           itunesAuthor: episode.author,
           itunesDuration: episode.duration,
@@ -231,4 +306,18 @@ initializeStorage().then(() => {
     console.log(`Upload your MP3 files to: ${AUDIO_DIR}`);
     console.log(`Metadata file location: ${METADATA_PATH}`);
   });
+});
+
+app.get('/debug/metadata', checkSecret, async (req, res) => {
+  try {
+    const metadata = await loadMetadata();
+    res.json({
+      metadataPath: METADATA_PATH,
+      metadata: metadata,
+      audioDir: AUDIO_DIR,
+      exists: await fsPromises.access(METADATA_PATH).then(() => true).catch(() => false)
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message, stack: error.stack });
+  }
 });

@@ -39,7 +39,7 @@ episodes:
     author: "The Christmas Band"
     duration: "3:45"
     
-  "2024-12-24_Christmas_Eve_Special.mp3":
+  "2024-12-24_Christmas_Eve_Special.ogg":
     description: "The grand finale! 🎄"
     author: "Santa & The Reindeer"
     duration: "5:30"
@@ -47,6 +47,41 @@ episodes:
       - Holiday
       - Jazz
 ```
+
+## 🎵 Supported Audio Formats
+
+Upload your audio files in any of these formats:
+
+- `.mp3` - MPEG Audio Layer III
+  ```
+  2024-12-01_First_Day.mp3
+  ```
+
+- `.m4a` - AAC Audio
+  ```
+  2024-12-02_Second_Day.m4a
+  ```
+
+- `.opus` - Opus Audio (better quality at lower bitrates!)
+  ```
+  2024-12-03_Third_Day.opus
+  2024-12-04_Fourth_Day.ogg  # Opus in Ogg container
+  2024-12-05_Fifth_Day.mka   # Opus in Matroska container
+  ```
+
+### 🎧 Format Tips
+
+- **MP3**: Best compatibility with all podcast players
+- **M4A**: Better quality than MP3 at the same size
+- **Opus**: Best quality-to-size ratio, but check your target podcast app for compatibility
+
+### 🔍 Compatibility Notes
+
+- Apple Podcasts: Supports MP3 and M4A
+- Pocket Casts: Supports all formats
+- Overcast: Supports MP3 and M4A
+- Web browsers: Support varies (check [caniuse.com](https://caniuse.com/?search=opus) for Opus support)
+
 
 ## 📱 Adding to Your Podcast App
 
@@ -59,7 +94,7 @@ episodes:
    - Apple Podcasts: Library → Add a Show → Add URL
    - Overcast: + → Add URL
    - Pocket Casts: Search → Add URL
-   - Spotify: Coming soon! 🤞
+   - Spotify: Coming soon! 🤞  (accepting Github PRs 🤝)
 
 ## 🔍 Useful Endpoints
 
@@ -104,7 +139,5 @@ Found a bug? Want to add a feature? PRs welcome!
 MIT - Go wild! 🎉
 
 ---
-
-Made with 🎵 by [Your Name]
 
 *P.S. If you make something cool with this, let me know! I'd love to hear about it!* 🎧
