@@ -21,13 +21,14 @@ const isGlitch = () => {
   return !!process.env.PROJECT_DOMAIN;
 };
 
-// Parse .glitch-assets file to get CDN URLs
+// Parse .glitch-assets file to get CDN URLs and track deletions
 async function getGlitchAssets() {
-  if (!isGlitch()) return new Map();
+  if (!isGlitch()) return { assets: new Map(), deletedUuids: new Set() };
 
   try {
     const content = await fsPromises.readFile('.glitch-assets', 'utf8');
     const assets = new Map();
+    const deletedUuids = new Set();
     
     // Process each line individually
     content.split('\n')
@@ -38,18 +39,16 @@ async function getGlitchAssets() {
           const cleanLine = line.trim().replace(/,\s*$/, '');
           const asset = JSON.parse(cleanLine);
           
-          if (asset.deleted) {
-            // Remove deleted assets
-            if (asset.uuid) {
-              // Find and remove any asset with this UUID
-              for (const [name, url] of assets.entries()) {
-                if (url.includes(asset.uuid)) {
-                  assets.delete(name);
-                }
+          if (asset.deleted && asset.uuid) {
+            deletedUuids.add(asset.uuid);
+            // Remove any existing asset with this UUID
+            for (const [name, url] of assets.entries()) {
+              if (url.includes(asset.uuid)) {
+                assets.delete(name);
               }
             }
-          } else if (asset.name && asset.url) {
-            // Store mapping of filename to CDN URL
+          } else if (asset.name && asset.url && asset.uuid && !deletedUuids.has(asset.uuid)) {
+            // Only store if not marked as deleted
             assets.set(asset.name, asset.url);
           }
         } catch (parseError) {
@@ -58,10 +57,10 @@ async function getGlitchAssets() {
         }
       });
 
-    return assets;
+    return { assets, deletedUuids };
   } catch (error) {
     console.warn('Error reading .glitch-assets:', error);
-    return new Map();
+    return { assets: new Map(), deletedUuids: new Set() };
   }
 }
 
@@ -227,8 +226,8 @@ app.use('/audio', checkSecret, async (req, res, next) => {
 
     // Check if we're on Glitch and have a CDN URL for this file
     if (isGlitch()) {
-      const glitchAssets = await getGlitchAssets();
-      const cdnUrl = glitchAssets.get(filename);
+      const { assets } = await getGlitchAssets();
+      const cdnUrl = assets.get(filename);
       if (cdnUrl) {
         // Redirect to CDN URL if available
         return res.redirect(cdnUrl);
@@ -276,7 +275,7 @@ app.get('/feed.xml', checkSecret, async (req, res) => {
   try {
     const metadata = await loadMetadata();
     const podcastMetadata = metadata.podcast || {};
-    const glitchAssets = isGlitch() ? await getGlitchAssets() : new Map();
+    const { assets } = await getGlitchAssets();
 
     const feed = new Podcast({
       title: podcastMetadata.title || 'My Private Music Collection',
@@ -296,8 +295,8 @@ app.get('/feed.xml', checkSecret, async (req, res) => {
 
     let audioFiles;
     if (isGlitch()) {
-      // When on Glitch, only use files that exist in glitch-assets
-      audioFiles = Array.from(glitchAssets.keys())
+      // When on Glitch, only use files that exist in glitch-assets and aren't deleted
+      audioFiles = Array.from(assets.keys())
         .filter(filename => {
           const ext = filename.toLowerCase().split('.').pop();
           return SUPPORTED_FORMATS.hasOwnProperty(ext);
@@ -323,7 +322,9 @@ app.get('/feed.xml', checkSecret, async (req, res) => {
         let audioUrl, fileSize;
         if (isGlitch()) {
           // On Glitch, use CDN URL directly
-          audioUrl = glitchAssets.get(episode.filename);
+          audioUrl = assets.get(episode.filename);
+          if (!audioUrl) continue; // Skip if no valid URL (might be deleted)
+          
           // Get size from glitch-assets metadata if available
           try {
             const content = await fsPromises.readFile('.glitch-assets', 'utf8');
@@ -374,12 +375,12 @@ app.get('/feed.xml', checkSecret, async (req, res) => {
 app.get('/episodes', checkSecret, async (req, res) => {
   try {
     const metadata = await loadMetadata();
-    const glitchAssets = isGlitch() ? await getGlitchAssets() : new Map();
+    const { assets } = await getGlitchAssets();
     
     let audioFiles;
     if (isGlitch()) {
-      // When on Glitch, only list files that exist in glitch-assets
-      audioFiles = Array.from(glitchAssets.keys())
+      // When on Glitch, only list files that exist in glitch-assets and aren't deleted
+      audioFiles = Array.from(assets.keys())
         .filter(file => file.endsWith('.mp3'))
         .map(file => getEpisodeDetails(file, metadata))
         .sort((a, b) => (b.releaseDate || 0) - (a.releaseDate || 0));
@@ -419,14 +420,15 @@ initializeStorage().then(() => {
 app.get('/debug/metadata', checkSecret, async (req, res) => {
   try {
     const metadata = await loadMetadata();
-    const glitchAssets = await getGlitchAssets();
+    const { assets, deletedUuids } = await getGlitchAssets();
     res.json({
       metadataPath: METADATA_PATH,
       metadata: metadata,
       audioDir: AUDIO_DIR,
       exists: await fsPromises.access(METADATA_PATH).then(() => true).catch(() => false),
       isGlitch: isGlitch(),
-      glitchAssets: Object.fromEntries(glitchAssets)
+      glitchAssets: Object.fromEntries(assets),
+      deletedUuids: Array.from(deletedUuids)
     });
   } catch (error) {
     res.status(500).json({ error: error.message, stack: error.stack });
