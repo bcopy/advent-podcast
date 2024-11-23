@@ -2,9 +2,9 @@
 
 Create your own private podcast feed with scheduled episodes! Perfect for advent calendars, daily music releases, or any time-based audio content. Each audio file is released based on its filename date - it's like magic! ✨
 
-## 🚀 Quick Start
+## 🚀 Quick Start on self-hosted server
 
-1. Remix this project on Glitch
+1. Setup your Node JS environment ( npm install )
 2. Set your secret token in `.env`:
    ```
    SECRET_TOKEN=your-super-secret-string
@@ -17,6 +17,29 @@ Create your own private podcast feed with scheduled episodes! Perfect for advent
    2024-12-01_First_Day_Of_Christmas.mp3
    2024-12-24_Christmas_Eve_Special.mp3
    ```
+4. Populate the ``data/metadata.yml`` file (c.f. example below)
+
+🎉 That's it! Your podcast is ready at:
+```
+https://your-project-name.com/feed.xml?token=your-super-secret-string
+```
+
+## 🚀 Quick Start on Glitch.com
+
+1. Import this Github project on Glitch
+2. Set your secret token in `.env`:
+   ```
+   SECRET_TOKEN=your-super-secret-string
+   ```
+3. Upload your MP3 files to Glitch assets with this naming pattern:
+   ```
+   YYYY-MM-DD_Episode_Title.mp3
+   
+   For example:
+   2024-12-01_First_Day_Of_Christmas.mp3
+   2024-12-24_Christmas_Eve_Special.mp3
+   ```
+4. Populate the ``data/metadata.yml`` file (c.f. example below) - the file name has to match the assets.
 
 🎉 That's it! Your podcast is ready at:
 ```
@@ -32,17 +55,20 @@ podcast:
   title: "My Awesome Advent Calendar"
   description: "24 days of musical surprises"
   author: "Santa's Little Helper"
+  image: "https://your.host.com/path/to/my-podcast-image.png"
 
 episodes:
   "2024-12-01_First_Day_Of_Christmas.mp3":
     description: "A partridge in a pear tree 🎵"
     author: "The Christmas Band"
     duration: "3:45"
+    image: "https://your.host.com/path/to/my-episode1-image.png"
     
   "2024-12-24_Christmas_Eve_Special.ogg":
     description: "The grand finale! 🎄"
     author: "Santa & The Reindeer"
     duration: "5:30"
+    image: "https://your.host.com/path/to/my-episode2-image.png"
     categories: 
       - Holiday
       - Jazz
@@ -102,7 +128,7 @@ Upload your audio files in any of these formats:
   ```
   /episodes?token=your-super-secret-string
   ```
-- Direct MP3 access:
+- Direct MP3 access (⚠️ Not supported on Glitch.com, assets are stored separately) :
   ```
   /audio/YYYY-MM-DD_Episode_Title.mp3?token=your-super-secret-string
   ```
