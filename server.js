@@ -1,7 +1,7 @@
 // server.js
 require('dotenv').config();
 const express = require('express');
-const Podcast = require('podcast');
+const { Podcast } = require('podcast');
 const cors = require('cors');
 const morgan = require('morgan');
 const path = require('path');
@@ -182,7 +182,7 @@ app.get('/feed.xml', checkSecret, async (req, res) => {
         }
 
         res.type('application/xml');
-        res.send(feed.xml());
+        res.send(feed.buildXml());
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Server error' });
