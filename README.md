@@ -59,12 +59,14 @@ podcast:
 
 episodes:
   "2024-12-01_First_Day_Of_Christmas.mp3":
+    title: "First Day of Christmas"
     description: "A partridge in a pear tree 🎵"
     author: "The Christmas Band"
     duration: "3:45"
     image: "https://your.host.com/path/to/my-episode1-image.png"
     
   "2024-12-24_Christmas_Eve_Special.ogg":
+    title: "Christmas Eve Special"
     description: "The grand finale! 🎄"
     author: "Santa & The Reindeer"
     duration: "5:30"
